@@ -145,11 +145,15 @@ fn validate<'a>(
     s: &'a Symbols,
     var_map: &'a Map<String, Value>,
 ) -> MyResult<(&'a Symbols, &'a Map<String, Value>)> {
-    match s.0.iter().find(|&e| !var_map.contains_key(e)) {
-        Some(undefined_varname) => {
-            res_err(simple_error!("variable {} not defined", undefined_varname))
-        }
-        None => res_ok((s, var_map)),
+    // Find all of the variables that are missing definition
+    let undefined_vars =
+        s.0.iter().filter(|&e| {
+            !var_map.contains_key(e)
+        }).collect::<Vec<_>>();
+    if !undefined_vars.is_empty() {
+        res_err(simple_error!("Missing definition of [{}]", undefined_vars.iter().join(",")))
+    } else {
+        res_ok((s, var_map))
     }
 }
 
