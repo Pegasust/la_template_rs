@@ -1,231 +1,127 @@
-mod common;
-pub use common::{res_err, res_ok, MyResult, MyResultTrait, AnyErr};
-use itertools::Itertools;
-use serde_json::{Map, Value};
-use simple_error::{require_with, simple_error};
-use std::str;
-use std::{
-    borrow::Cow,
-    io::{BufRead, Seek, SeekFrom},
-};
-use utf8_chars::BufReadCharsExt;
+use std::{path::{PathBuf, Path}, borrow::Cow, fs::File, io::BufReader, str::FromStr, os::unix::prelude::FileExt};
 
-#[derive(Debug)]
-enum Token {
-    Str(String),
-    Var(u8),
+use itertools::{Product, iproduct, Itertools};
+use la_template_base::{MyResult, parse_template, MyResultTrait, generate_template};
+use lazy_static::lazy_static;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use simple_error::simple_error;
+
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+struct ManagedVarSchema {
+    target: String,
+    var: PathBuf,
 }
 
-fn bytes_to_string(bytes: &[u8]) -> MyResult<String> {
-    str::from_utf8(bytes).map(|s| s.to_string()).my_result()
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+struct ReplaceRegexSchema {
+    pattern: String,
+    replace: String
 }
 
-impl Token {
-    pub fn from_bytes(bytes: &[u8]) -> MyResult<Token> {
-        bytes_to_string(bytes).map(Token::Str)
+impl ReplaceRegexSchema {
+    fn dispatch(&mut self)->MyResult<&mut Self> {
+        unimplemented!("dispatch promised variables into self.replace");
+        Ok(self)
+    }
+    fn regex_replace<'a, P: AsRef<Path>+'a>(&self, input: P)->MyResult<PathBuf> {
+        // lazy_static!{static ref regex: Regex = Regex::new(self.pattern.as_ref()).unwrap();}
+        let regex = Regex::new(self.pattern.as_ref())?;
+        // convert path to str, then back
+        let path_str = input.as_ref().to_string_lossy();
+        let replaced = regex.replace(&path_str, &self.replace);
+        PathBuf::from_str(&replaced)
+            .map_err(|e| e.into())
     }
 }
 
-impl<AnyStr> From<AnyStr> for Token
-where
-    AnyStr: AsRef<str>,
-{
-    fn from(str: AnyStr) -> Self {
-        Token::Str(str.as_ref().to_string())
+impl Default for ReplaceRegexSchema {
+    fn default() -> Self {
+        Self { pattern: "(.t)".to_string(), replace: "{target}".to_string() }
     }
 }
 
-#[derive(Default, Debug)]
-pub struct Template {
-    token: Vec<Token>,
+/// The main schema that we pass into the main function:
+/// `la_template generate manager.json`
+/// 
+/// It should looks like
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+struct ManagerSchema {
+    vars: Vec<ManagedVarSchema>,
+    templates: Vec<PathBuf>,
+    replace_regex: Option<ReplaceRegexSchema>,
+    skip_if_error: Option<bool>
 }
 
-/// Contains all of the variable names
-#[derive(Default, Debug)]
-pub struct Symbols(Vec<String>);
-impl From<Symbols> for Vec<String> {
-    fn from(s: Symbols) -> Self {
-        s.0
-    }
-}
-
-/// PREREQ: raw is pointing right after the '$' symbol.
-///
-/// A var name must be in form ${name even has space} -> "name even has space"
-///
-/// Note: one difficult part about non-encapsulated var name is that we need
-/// to backtrack from the whitespace acting as a separator to preserve original string.
-fn var_name<R: BufRead + Seek>(raw: &mut R) -> MyResult<String> {
-    let c = require_with!(raw.read_char()?, "Unexpected EOF while parsing var");
-    let mut buf = vec![0u8; 0];
-    if c != '{' {
-        return Err(simple_error!(
-            "Unexpected char: {} at {}. \
-            Var names not encapsulated are not (yet) supported. \
-            Try: ${{my_name}} instead of $my_name.",
-            c,
-            raw.seek(SeekFrom::Current(0)).unwrap()
-        )
-        .into());
-    }
-    // the last read_char should have forwarded the reading cursor by 1 byte.
-    // now we read until we see '}'
-    match raw.read_until(b'}', &mut buf) {
-        Ok(_) => {
-            if buf[buf.len() - 1] != b'}' {
-                return Err(simple_error!("Expecting a matching '}}'").into());
-            }
-            log::debug!("Found '}}': {}", bytes_to_string(&buf).unwrap());
-            // found '}', it is a var name
-            buf.pop();
-            bytes_to_string(&buf)
-        }
-        Err(e) => res_err(e),
-    }
-}
-
-fn parse_template<R: BufRead + Seek>(mut raw: R) -> MyResult<(Template, Symbols)> {
-    let mut template = Template::default();
-    let mut symbs = Symbols::default();
-
-    let mut buf: Vec<u8> = Vec::new();
-    loop {
-        const SYM: u8 = b'$';
-        const ESCAPE: u8 = b'\\';
-        match raw.read_until(SYM, &mut buf) {
-            Ok(_) => {
-                let chr_symb_opt = buf.pop().and_then(|b| {
-                    if b == SYM {
-                        Some(b)
-                    } else {
-                        buf.push(b);
-                        None
-                    }
-                });
-                log::debug!("Found \'{SYM}\'; chr_symb_opt: {chr_symb_opt:?}");
-                if matches!(chr_symb_opt, None) {
-                    log::debug!("EOF");
-                    template.token.push(Token::from_bytes(&buf)?);
-                    break Ok(());
-                }
-                let chr_before = buf.pop();
-                log::debug!("chr_before: {chr_before:?}");
-                match chr_before {
-                    Some(b) => {
-                        if b == ESCAPE {
-                            buf.push(chr_symb_opt.unwrap());
-                            log::debug!("\"{}\" is escape!", bytes_to_string(&buf).unwrap());
-                            continue;
-                        } else {
-                            buf.push(b);
-                            log::debug!("\"{}\" to be parsed", bytes_to_string(&buf).unwrap());
-                        }
-                    }
-                    None => {
-                        log::debug!("First substitution hit");
-                    } // first var substitution
-                }
-                // it is var, we need to add the buffer so far
-                // as a Token::Str
-                template.token.push(Token::from_bytes(&buf)?);
-                buf.clear();
-                // now parse the var name
-                let var_name = var_name(&mut raw)?;
-                log::debug!("Var name: {var_name}");
-                template.token.push(Token::Var(symbs.0.len() as u8));
-                symbs.0.push(var_name);
-            }
-            Err(e) => break res_err(e),
-        };
-    }?;
-    res_ok((template, symbs))
-}
-
-fn validate<'a>(
-    s: &'a Symbols,
-    var_map: &'a Map<String, Value>,
-) -> MyResult<(&'a Symbols, &'a Map<String, Value>)> {
-    // Find all of the variables that are missing definition
-    let undefined_vars =
-        s.0.iter().filter(|&e| {
-            !var_map.contains_key(e)
-        }).collect::<Vec<_>>();
-    if !undefined_vars.is_empty() {
-        res_err(simple_error!("Missing definition of [{}]", undefined_vars.iter().join(",")))
-    } else {
-        res_ok((s, var_map))
-    }
-}
-
-pub enum Warning<T> {
-    Ok(T),
-    Partial(T, AnyErr),
-}
-
-impl<T> Warning<T> {
-    pub fn from<E: Into<AnyErr>>(partial: T, might_err: Option<E>) -> Self {
-        match might_err {
-            Some(err) => Warning::Partial(partial, err.into()),
-            None => Warning::Ok(partial),
-        }
-    }
-}
-
-fn apply_u(
-    temp: Template,
-    symb: &Symbols,
-    vars_as_map: &Map<String, Value>,
-) -> MyResult<Warning<String>> {
-    // pipeline: Token::Var -> String
-    let mut err: Option<String> = None;
-    let output = temp
-        .token
-        .iter()
-        .map_while(|tok| match tok {
-            Token::Str(s) => Some(Cow::from(s)),
-            Token::Var(idx) => symb
-                .0
-                .get(*idx as usize)
-                .ok_or(simple_error!("Index out of bound: {idx}"))
-                .and_then(|name| {
-                    vars_as_map
-                        .get(name)
-                        .ok_or(simple_error!("name {name} not defined in given variables"))
-                })
-                .and_then(|v| {
-                    v.as_str()
-                        .ok_or(simple_error!("value {v:?} is not string."))
-                })
-                .map(|s| s.into())
-                .map_err(|e| err = Some(e.to_string()))
-                .ok(),
+pub fn generate(mut manager: ManagerSchema) -> MyResult<String> {
+    // parse vars and templates separately
+    let parsed_vars: Vec<MyResult<(_,Value)>> = manager.vars.iter()
+        .map(|v| {
+            File::open(&v.var).map_err(|e| e.into())
+                .and_then(|f| serde_json::from_reader(f).map_err(|e| e.into()))
+                .map(|val| (&v.target, val))
         })
-        .join("");
-    Ok(Warning::from(output, err))
-}
-fn apply(
-    (temp, symb, vars_as_map): (Template, &Symbols, &Map<String, Value>),
-) -> MyResult<Warning<String>> {
-    apply_u(temp, symb, vars_as_map)
-}
+        .collect::<Vec<_>>();
+    let parsed_templates = manager.templates.iter()
+        .map(|template_path| {
+            File::open(template_path).map_err(|e|e.into())
+                .map(|template_f| BufReader::new(template_f))
+                .and_then(|template_buf| 
+                    parse_template(template_buf).map(|p|(template_path, p))
+                )
+        })
+        .collect::<Vec<_>>();
+    let mut dispatched_regex = manager.replace_regex.unwrap_or_default();
+    dispatched_regex.dispatch()?;
 
-fn generate_template_partial<R: BufRead + Seek>(
-    template: R,
-    variables: Value,
-) -> MyResult<Warning<String>> {
-    let vars_as_map = variables
-        .as_object()
-        .ok_or(simple_error!("Given variables do not form a map"))?;
-    let (template, symbols) = parse_template(template)?;
-    log::debug!("template: {template:?}; Symbols: {symbols:?}");
-    validate(&symbols, vars_as_map)
-        .map(|(s, v)| (template, s, v))
-        .and_then(apply)
-}
+    // now group errors aside from good ones
+    let mut grouped_vars = parsed_vars.into_iter()
+        .into_group_map_by(|r_mvar| matches!(r_mvar, Result::Ok(_)));
+    let mut grouped_templates = parsed_templates.into_iter()
+        .into_group_map_by(|r_temp| matches!(r_temp, Result::Ok(_)));
 
-pub fn generate_template<R: BufRead + Seek>(template: R, variables: Value) -> MyResult<String> {
-    generate_template_partial(template, variables).and_then(|warn| match warn {
-        Warning::Ok(s) => Ok(s),
-        Warning::Partial(s, err) => Err(simple_error!("Failed: {:?};\nPartial:{}", s, err).into()),
-    })
+    let skip_error = manager.skip_if_error.unwrap_or(true);
+    let err_msg = {
+        // collect if either grouped_vars or grouped_templates have errs (false)
+        let gv_err = grouped_vars
+            .remove(&false)
+            .map(|v|{
+                v.into_iter().map(|r| r.result_str().unwrap_err())
+                    .join("\n")
+            });
+        let gt_err = grouped_templates.remove(&false)
+            .map(|v| {
+                v.into_iter().map(|r| r.result_str().unwrap_err())
+                    .join("\n")
+            });
+        [gv_err.unwrap_or_default(), gt_err.unwrap_or_default()].join("\n")
+    };
+
+    // Handle parsing errors
+    if err_msg.len() > 0 {
+        if !skip_error {return Err(simple_error!(err_msg).into())}
+        log::warn!("Failed to parse some template/variables:\n{err_msg}")
+    }
+    let clean_gv = grouped_vars.get(&true);
+    let clean_tm = grouped_templates.get(&true);
+    if clean_gv.is_none() || clean_tm.is_none() {
+        // Nothing to build
+        return Ok(Default::default())
+    }
+    
+    // Execute
+    clean_gv.unwrap().into_iter().cartesian_product(clean_tm.unwrap().into_iter())
+        .map(|(vars, temp)| (&vars.unwrap(), &temp.unwrap()))
+        .map(|((target, vars), (path, temp))| {
+            let location = dispatched_regex.regex_replace(path)?;
+            let location_f = File::create(location)?;
+            generate_template(temp, vars)
+                .and_then(|outp| 
+                    location_f.write_all_at(outp.as_bytes(), 0u64)
+                        .map_err(|e| e.into())
+                )
+        });
+
+    Ok(Default::default())
 }

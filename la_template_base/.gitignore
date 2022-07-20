@@ -1,0 +1,4 @@
+/target
+.markdownlint.yaml
+.trunk
+.vscode

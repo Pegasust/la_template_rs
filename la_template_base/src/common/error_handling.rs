@@ -22,16 +22,16 @@ pub fn res_err<T, E: Into<AnyErr>>(e: E) -> MyResult<T> {
     Err(e.into())
 }
 
-pub enum Warning<T> {
-    Ok(T),
-    Partial(T, AnyErr),
-}
+// pub enum Warning<T> {
+//     Ok(T),
+//     Partial(T, AnyErr),
+// }
 
-impl<T> Warning<T> {
-    pub fn from<E: Into<AnyErr>>(partial: T, might_err: Option<E>) -> Self {
-        match might_err {
-            Some(err) => Warning::Partial(partial, err.into()),
-            None => Warning::Ok(partial),
-        }
-    }
-}
+// impl<T> Warning<T> {
+//     pub fn from<E: Into<AnyErr>>(partial: T, might_err: Option<E>) -> Self {
+//         match might_err {
+//             Some(err) => Warning::Partial(partial, err.into()),
+//             None => Warning::Ok(partial),
+//         }
+//     }
+// }

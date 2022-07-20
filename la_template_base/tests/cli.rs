@@ -1,4 +1,4 @@
-use la_template_rs::*;
+use la_template_base::*;
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufReader, Cursor};
@@ -45,7 +45,7 @@ fn str_input<AnyStr0: AsRef<str>, AnyStr1: AsRef<str>>(
 ) -> MyResult<String> {
     generate_template(
         Cursor::new(template.as_ref()),
-        serde_json::from_str(vars.as_ref())?,
+        serde_json::from_str::<Value>(vars.as_ref())?,
     )
 }
 
@@ -54,7 +54,30 @@ fn from_string() {
     setup();
     let string_rb = "We can also construct string templates${too}";
     assert_eq!(
-        str_input(string_rb, r#"{"too":"t_o_o"}"#).expect("Should geenrate concrete output"),
+        str_input(string_rb, r#"{"too":"t_o_o"}"#).expect("Should generate concrete output"),
         "We can also construct string templatest_o_o"
     );
+}
+
+#[test]
+fn missing_var_def() {
+    setup();
+    let template = r#"Many ${var} is ${status}"#;
+    let vars = r#"{
+        "var": "defined"
+    }"#;
+    let err = str_input(template, vars).expect_err("Should say missing vars");
+    println!("err: {err:?}");
+
+    let err = str_input(template, "{}").expect_err("Missing vars");
+    println!("err: {err:?}");
+
+    let spare_and_missing = str_input(template,r#"{"var":"def", "other": "d", "somethingelse":"unrelated"}"#)
+        .expect_err("Missing vars");
+    println!("spare_and_missing: {spare_and_missing:?}");
+
+    let spare =
+        str_input(template, r#"{"var":"def","status":"good","over":"defined"}"#)
+            .expect("Over-defining is non-error");
+    assert_eq!(spare, "Many def is good".to_string());
 }
