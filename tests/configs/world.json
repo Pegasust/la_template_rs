@@ -1,0 +1,7 @@
+{
+    "vars": [
+        {"var": "pegasust.json", "metadata": {"target": ""}},
+        {"var": "hungtr-uofa.json", "metadata": {"target": "uofa"}}
+    ],
+    "templates": ["hello_world.t.txt", "bye_world.t.txt"]
+}

@@ -1,18 +1,14 @@
-use std::{path::{PathBuf, Path}, borrow::Cow, fs::File, io::BufReader, str::FromStr, os::unix::prelude::FileExt};
+use std::{path::{PathBuf, Path}, borrow::Cow, fs::File, io::BufReader, str::FromStr, os::unix::prelude::FileExt, collections::HashMap};
 
 use itertools::{Product, iproduct, Itertools};
-use la_template_base::{MyResult, parse_template, MyResultTrait, generate_template};
+use la_template_base::{MyResult, parse_template, MyResultTrait, generate_template, GenerateTemplate, VariableMap, OptionVecTrait, AnyErr};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simple_error::simple_error;
 
-#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
-struct ManagedVarSchema {
-    target: String,
-    var: PathBuf,
-}
+
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 struct ReplaceRegexSchema {
@@ -20,19 +16,33 @@ struct ReplaceRegexSchema {
     replace: String
 }
 
-impl ReplaceRegexSchema {
-    fn dispatch(&mut self)->MyResult<&mut Self> {
-        unimplemented!("dispatch promised variables into self.replace");
-        Ok(self)
+#[derive(Debug)]
+struct ReplaceRegex {
+    regex: Regex,
+    replace: String,
+    last_dispatch: Option<String>
+}
+
+impl ReplaceRegex {
+    fn dispatch(&mut self, target_metadata: &HashMap<String, String>) -> MyResult<&mut Self> {
+        strfmt::strfmt(&self.replace, target_metadata)
+            .map_err(|e| e.into())
+            .map(|v| {self.last_dispatch = Some(v); self})
     }
-    fn regex_replace<'a, P: AsRef<Path>+'a>(&self, input: P)->MyResult<PathBuf> {
-        // lazy_static!{static ref regex: Regex = Regex::new(self.pattern.as_ref()).unwrap();}
-        let regex = Regex::new(self.pattern.as_ref())?;
-        // convert path to str, then back
+    fn regex_replace<'a, P: AsRef<Path>+'a>(&self, input: P) -> MyResult<PathBuf> {
+        let repl = self.last_dispatch.as_ref().ok_or_else(||simple_error!("{:?} not dispatched", self))?;
+
         let path_str = input.as_ref().to_string_lossy();
-        let replaced = regex.replace(&path_str, &self.replace);
+        let replaced = self.regex.replace(&path_str, repl);
         PathBuf::from_str(&replaced)
             .map_err(|e| e.into())
+    }
+}
+
+impl ReplaceRegexSchema {
+    fn compile(self) -> Result<ReplaceRegex, regex::Error> {
+        Regex::new(self.pattern.as_ref()).map(|r| 
+            ReplaceRegex{ regex: r, replace: self.replace, last_dispatch: None })
     }
 }
 
@@ -42,25 +52,33 @@ impl Default for ReplaceRegexSchema {
     }
 }
 
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+struct ManagedVarSchema {
+    #[serde(default="HashMap::new")]
+    metadata: HashMap<String, String>,
+    var: PathBuf,
+}
+
+
 /// The main schema that we pass into the main function:
 /// `la_template generate manager.json`
 /// 
 /// It should looks like
 #[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
-struct ManagerSchema {
+pub struct ManagerSchema {
     vars: Vec<ManagedVarSchema>,
     templates: Vec<PathBuf>,
     replace_regex: Option<ReplaceRegexSchema>,
     skip_if_error: Option<bool>
 }
 
-pub fn generate(mut manager: ManagerSchema) -> MyResult<String> {
+pub fn generate(manager: ManagerSchema) -> Result<(), Vec<AnyErr>> {
     // parse vars and templates separately
-    let parsed_vars: Vec<MyResult<(_,Value)>> = manager.vars.iter()
+    let parsed_vars: Vec<MyResult<(_,VariableMap)>> = manager.vars.iter()
         .map(|v| {
             File::open(&v.var).map_err(|e| e.into())
-                .and_then(|f| serde_json::from_reader(f).map_err(|e| e.into()))
-                .map(|val| (&v.target, val))
+                .and_then(|f| serde_json::from_reader::<_, Value>(f).map_err(|e| e.into()))
+                .map(|val| (&v.metadata, val.into()))
         })
         .collect::<Vec<_>>();
     let parsed_templates = manager.templates.iter()
@@ -68,12 +86,12 @@ pub fn generate(mut manager: ManagerSchema) -> MyResult<String> {
             File::open(template_path).map_err(|e|e.into())
                 .map(|template_f| BufReader::new(template_f))
                 .and_then(|template_buf| 
-                    parse_template(template_buf).map(|p|(template_path, p))
+                    parse_template(template_buf).map(|p|(template_path, p.into()))
                 )
         })
         .collect::<Vec<_>>();
-    let mut dispatched_regex = manager.replace_regex.unwrap_or_default();
-    dispatched_regex.dispatch()?;
+    let mut dispatched_regex = manager.replace_regex.unwrap_or_default().compile()
+        .map_err(|e| vec![e.into()])?;
 
     // now group errors aside from good ones
     let mut grouped_vars = parsed_vars.into_iter()
@@ -98,30 +116,37 @@ pub fn generate(mut manager: ManagerSchema) -> MyResult<String> {
         [gv_err.unwrap_or_default(), gt_err.unwrap_or_default()].join("\n")
     };
 
-    // Handle parsing errors
+    // Greedily show warnings or fail.
     if err_msg.len() > 0 {
-        if !skip_error {return Err(simple_error!(err_msg).into())}
+        if !skip_error {return Err(vec![simple_error!(err_msg).into()])}
         log::warn!("Failed to parse some template/variables:\n{err_msg}")
     }
-    let clean_gv = grouped_vars.get(&true);
-    let clean_tm = grouped_templates.get(&true);
-    if clean_gv.is_none() || clean_tm.is_none() {
-        // Nothing to build
-        return Ok(Default::default())
-    }
+    let clean_gv = grouped_vars
+        .remove(&true)
+        .to_vec()
+        .into_iter().map(|v| v.unwrap())
+        // collect so that we own the data. Cartesian product only borrow
+        .collect::<Vec<_>>();
+    let clean_tm = grouped_templates
+        .remove(&true)
+        .to_vec()
+        .into_iter().map(|v| v.unwrap())
+        .collect::<Vec<_>>();
     
     // Execute
-    clean_gv.unwrap().into_iter().cartesian_product(clean_tm.unwrap().into_iter())
-        .map(|(vars, temp)| (&vars.unwrap(), &temp.unwrap()))
+    let err = clean_gv.iter().cartesian_product(clean_tm.iter())
         .map(|((target, vars), (path, temp))| {
+            dispatched_regex.dispatch(target)?;
             let location = dispatched_regex.regex_replace(path)?;
             let location_f = File::create(location)?;
-            generate_template(temp, vars)
+            GenerateTemplate{template: &temp, variables: &vars}.generate()
                 .and_then(|outp| 
                     location_f.write_all_at(outp.as_bytes(), 0u64)
                         .map_err(|e| e.into())
                 )
-        });
-
-    Ok(Default::default())
+        })
+        .filter_map(|v| v.err())
+        .collect::<Vec<_>>();
+    
+    if err.is_empty() {Ok(())} else {Err(err)}
 }

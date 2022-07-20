@@ -26,16 +26,15 @@ This application manages the template to their vars
 ```json
 {
     "vars": [
-        {"target": "", "var":"pegasust.json"},
-        {"target": "uofa", "var": "hungtr-uofa.json"}
+        {"var": "pegasust.json", "metadata": {"target": ""}},
+        {"var": "hungtr-uofa.json", "metadata": {"target": "uofa"}}
     ],
     "templates": ["hello_world.t.txt", "bye_world.t.txt"],
     // uses Regex::replace(pattern, format!(replace))
     "replace_regex": {
         "pattern": "(.t)",
         // more info here https://docs.rs/regex/1.1.0/regex/struct.Regex.html#method.replace
-        // Some variables that are available in the scope for format!:
-        // target
+        // Some variables that are available in the scope for format! (powered by crates.io/strfmt)
         "replace": "{target}"
     }
 }

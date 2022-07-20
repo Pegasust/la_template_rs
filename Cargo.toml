@@ -20,6 +20,7 @@ enum_dispatch = "0.3.8"
 la_template_base = { version = "*", path = "la_template_base" }
 regex="1.6.0"
 lazy_static="1.4.0"
+strfmt="0.1.6"
 
 [features]
 default = []

@@ -2,7 +2,7 @@ mod common;
 use std::{io::{Seek, BufRead}, borrow::Cow, collections::HashMap};
 
 use common::{bytes_to_string};
-pub use common::{res_err, res_ok, AnyErr, MyResult, MyResultTrait};
+pub use common::{res_err, res_ok, AnyErr, MyResult, MyResultTrait, OptionVecTrait};
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -12,8 +12,8 @@ use simple_error::simple_error;
 
 pub struct GenerateTemplate<'a>
 {
-    template: &'a Template,
-    variables: &'a VariableMap
+    pub template: &'a Template,
+    pub variables: &'a VariableMap
 }
 
 impl <'t> GenerateTemplate<'t>
@@ -73,17 +73,17 @@ struct TemplateParser<R>
 {
     // on creation
     template: R,
-    #[serde(default="SYM")]
+    #[serde(default="sym")]
     sym: u8,
-    #[serde(default="ESCAPE")]
+    #[serde(default="escape")]
     escape: u8,
     // on dispatch
     buf: Vec<u8>,
     tokens: Vec<Token>,
     symbs: Vec<String>,
 }
-const fn SYM()->u8{b'$'}
-const fn ESCAPE()->u8{b'\\'}
+const fn sym()->u8{b'$'}
+const fn escape()->u8{b'\\'}
 
 #[derive(Debug)]
 enum SeekSymbol {
@@ -165,10 +165,10 @@ pub fn parse_template<R>(template: R)
 pub fn generate_template<T, V>(template: T, variables: V) 
     -> MyResult<String> 
     where
-        T: AsRef<Template>,
-        V: AsRef<VariableMap>
+        T: Into<Template>,
+        V: Into<VariableMap>
 {
-    GenerateTemplate {template:template.as_ref(), variables:variables.as_ref()}.generate()
+    GenerateTemplate {template:&template.into(), variables:&variables.into()}.generate()
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
@@ -179,15 +179,16 @@ pub enum Token {
 #[enum_dispatch]
 pub trait TemplateTrait {
     fn tokens(&self) -> &Vec<Token>;
-    fn tokens_mut(&mut self) -> &mut Vec<Token>;
+    // fn tokens_mut(&mut self) -> &mut Vec<Token>;
     fn symbols(&self) -> &Vec<String>;
-    fn symbols_mut(&mut self) -> &mut Vec<String>;
+    // fn symbols_mut(&mut self) -> &mut Vec<String>;
 }
 
 #[enum_dispatch(TemplateTrait)]
+#[derive(Debug)]
 pub enum Template {
     ConcreteTemplate,
-    BufReadTemplate
+    BufReadTemplate,
 }
 
 #[enum_dispatch]
@@ -198,6 +199,7 @@ pub trait VariableTrait {
     }
 }
 #[enum_dispatch(VariableTrait)]
+#[derive(Debug)]
 pub enum VariableMap 
 {
     HashMapStd(HashMap<String, String>),
@@ -218,26 +220,25 @@ impl TemplateTrait for ConcreteTemplate {
         &self.tokens
     }
 
-    fn tokens_mut(&mut self) ->  &mut Vec<Token> {
-        &mut self.tokens
-    }
+    // fn tokens_mut(&mut self) ->  &mut Vec<Token> {&mut self.tokens}
 
     fn symbols(&self) ->  &Vec<String> {
         &self.symbols
     }
 
-    fn symbols_mut(&mut self) ->  &mut Vec<String> {
-        &mut self.symbols
-    }
+    // fn symbols_mut(&mut self) ->  &mut Vec<String> {&mut self.symbols}
 }
 
-wrapper!(pub BufReadTemplate wraps ConcreteTemplate);
+wrapper!(
+#[derive(Debug)] 
+pub BufReadTemplate wraps ConcreteTemplate
+);
 
 impl TemplateTrait for BufReadTemplate {
     wrap_fn!(fn tokens(&self) -> &Vec<Token>);
     wrap_fn!(fn symbols(&self) -> &Vec<String>);
-    wrap_fn!(fn tokens_mut(&mut self) -> &mut Vec<Token>);
-    wrap_fn!(fn symbols_mut(&mut self) -> &mut Vec<String>);
+    // wrap_fn!(fn tokens_mut(&mut self) -> &mut Vec<Token>);
+    // wrap_fn!(fn symbols_mut(&mut self) -> &mut Vec<String>);
 }
 
 impl <R> From<R> for BufReadTemplate where R: BufRead+Seek {
