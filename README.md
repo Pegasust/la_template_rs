@@ -39,3 +39,11 @@ This application manages the template to their vars
     }
 }
 ```
+## TODO
+
+- [x] Implement rough template_fs
+- [ ] template_fs: Test MemFS
+- [ ] template_fs: Test NaiveFS
+- [ ] template_fs: Test RootedFS
+- [ ] template_fs: Implement PathMappedFS
+- [ ] template_fs: Test PathMappedFS
