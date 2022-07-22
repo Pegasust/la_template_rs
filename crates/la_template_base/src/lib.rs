@@ -1,13 +1,13 @@
-mod common;
+// mod common;
 use std::{io::{Seek, BufRead}, borrow::Cow, collections::HashMap};
 
 use common::{bytes_to_string};
-pub use common::{res_err, res_ok, AnyErr, MyResult, MyResultTrait, OptionVecTrait};
+use common::{res_err, res_ok, MyResult, wrapper, wrap_fn};
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use core::hash::Hash;
+
 use simple_error::simple_error;
 
 pub struct GenerateTemplate<'a>

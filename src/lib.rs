@@ -3,17 +3,7 @@ mod template_fs;
 mod memfs_tracer;
 
 use replace_regex::*;
-pub use template_fs::{
-    FileImpl,
-    FileStr,
-    FileSystem,
-    FileSystemImpl,
-    FileTrait,
-    MemFS,
-    NaiveFS,
-    OSFile,
-    RootedFS
-};
+
 use std::{
     collections::HashMap,
     fs::File,
@@ -25,9 +15,9 @@ use std::{
 use enum_dispatch::enum_dispatch;
 use itertools::{Itertools};
 use la_template_base::{
-    generate_template, parse_template, AnyErr, GenerateTemplate, MyResult, MyResultTrait,
-    OptionVecTrait, VariableMap,
+    generate_template, parse_template, GenerateTemplate, VariableMap,
 };
+use common::{AnyErr, OptionVecTrait, MyResult, MyResultTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simple_error::simple_error;
@@ -42,7 +32,7 @@ struct ManagedVarSchema {
 /// The main schema that we pass into the main function:
 /// `la_template generate manager.json`
 ///
-/// It should looks like
+/// It should looks like; TODO: Complete this doc
 #[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct ManagerSchema {
     vars: Vec<ManagedVarSchema>,
@@ -51,87 +41,8 @@ pub struct ManagerSchema {
     skip_if_error: Option<bool>,
 }
 
-/// The trait specifying that this will handle the writing after
-/// template generation is done
-#[enum_dispatch]
-pub trait WriteGeneratedOutput {
-    fn write(&mut self, proposed_location: PathBuf, output: String) -> MyResult<()>;
-}
-
-#[enum_dispatch(WriteGeneratedOutput)]
-pub enum WriteHandler {
-    NaiveWriteToFile,
-    RootedWriteToFile,
-    WriteToSimpleVirtualFile
-}
-
-/// Context-free naively write to file without any consideration
-/// of relative path, absolute path, or even the invoking location
-/// 
-/// This is best used for configurations that does only absolute path
-/// 
-/// TODO: Verify that everything is absolute path; warn on any
-/// using relative path.
-pub struct NaiveWriteToFile;
-impl WriteGeneratedOutput for NaiveWriteToFile {
-    fn write(&mut self, loc: PathBuf, outp: String) -> MyResult<()> {
-        let location_f = File::create(loc)?;
-        location_f
-            .write_all_at(outp.as_bytes(), 0u64)
-            .map_err(|e| e.into())
-    }
-}
-
-/// TODO: Writes to the file, but will make every relative path points from
-/// given root (from constructor)
-pub struct RootedWriteToFile {
-    root: PathBuf
-}
-impl WriteGeneratedOutput for RootedWriteToFile {
-    fn write(&mut self,proposed_location:PathBuf,output:String) -> MyResult<()> {
-        todo!()
-    }
-}
-
-/// Writes to a simple virtual file system. This can be used to pipe onto
-/// other processors before outputting because it retains the proposed
-/// location along with the processed template.
-/// 
-/// Very helpful for testing and validation or even dry run.
-/// 
-/// TODO: Even better if we can attach logs or file-system operations
-/// to this struct
-pub struct WriteToSimpleVirtualFile {
-    /// Stores a bucket-like file location
-    bucket: HashMap<PathBuf, Vec<u8>>
-}
-
-impl Default for WriteToSimpleVirtualFile {
-    fn default() -> Self {
-        Self {bucket: Default::default()}
-    }
-}
-
-impl WriteToSimpleVirtualFile {
-    // some builder pattern
-
-}
-
-impl WriteGeneratedOutput for WriteToSimpleVirtualFile {
-    fn write(&mut self,proposed_location:PathBuf,output:String) -> MyResult<()> {
-        let overwrite_opt = self.bucket.get(&proposed_location).map(|last| last != output.as_bytes());
-        let overwrite = matches!(overwrite_opt, Some(v) if v);
-        if overwrite {
-            return Err(simple_error!("Overwriting at {:?}", proposed_location).into())
-        }
-        self.bucket.insert(proposed_location, output.into_bytes());
-        Ok(())
-    }
-}
-
-pub fn generate_with_handler<W: WriteGeneratedOutput>(
-    manager: ManagerSchema,
-    mut generate_handler: W,
+pub fn generate_with_handler(
+    manager: ManagerSchema, fs: FileSystemImpl
 ) -> Result<(), Vec<AnyErr>> {
     // parse vars and templates separately
     let parsed_vars: Vec<MyResult<(_, VariableMap)>> = manager
@@ -235,5 +146,5 @@ pub fn generate_with_handler<W: WriteGeneratedOutput>(
 }
 
 pub fn generate(manager: ManagerSchema) -> Result<(), Vec<AnyErr>> {
-    generate_with_handler(manager, NaiveWriteToFile {})
+    generate_with_handler(manager, Default::default())
 }

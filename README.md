@@ -42,6 +42,13 @@ This application manages the template to their vars
 ## TODO
 
 - [x] Implement rough template_fs
+- [x] cf_fs: Categorize NaiveFS and RootedFS to PathInterpreter
+- [ ] cf_fs: Implicit absolute path converter for PathInterpreter?
+- [ ] cf_fs: FileImpl should implement Read
+- [ ] la_template_rs: Implement main.rs. This provides a good overlook for resulting API
+- [ ] Unit test for replace_regex.rs
+- [ ] la_template_rs: Integration test using Docker container and copy
+- [ ] la_template_rs: Integration test using MemFS
 - [ ] template_fs: Test MemFS
 - [ ] template_fs: Test NaiveFS
 - [ ] template_fs: Test RootedFS

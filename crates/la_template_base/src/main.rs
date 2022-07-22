@@ -1,5 +1,6 @@
 use clap::Parser;
-use la_template_base::{generate_template, AnyErr, Template};
+use la_template_base::{generate_template};
+use common::AnyErr;
 use serde_json::Value;
 use std::{
     fs::File,

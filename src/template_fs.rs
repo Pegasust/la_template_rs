@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::{path::Path, io::BufReader};
 use std::fs::File;
 use enum_dispatch::enum_dispatch;
-use la_template_base::{MyResult, wrapper};
+use common::{MyResult, wrapper};
 use simple_error::simple_error;
 
 use crate::memfs_tracer::{Tracer, Trace};
@@ -45,6 +45,12 @@ pub enum FileSystemImpl {
     MemFS(MemFS)
 }
 
+impl Default for FileSystemImpl {
+    fn default() -> Self {
+        NaiveFS::default().into()
+    }
+}
+
 #[enum_dispatch]
 pub trait FileTrait {
     // TODO: make these into references if possible
@@ -57,6 +63,16 @@ pub enum FileImpl<'a> {
     FileStr(FileStr<'a>)
 }
 
+impl <'a> Read for FileImpl<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::OSFile(file) => file.0.read(buf),
+            Self::FileStr(str) => {
+                
+            }
+        }
+    }
+}
 
 pub struct NaiveFS;
 impl Default for NaiveFS {

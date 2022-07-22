@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, str::FromStr};
 
-use la_template_base::MyResult;
+use common::MyResult;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use simple_error::simple_error;

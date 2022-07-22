@@ -41,6 +41,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
+name = "cf_fs"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "enum_dispatch",
+ "once_cell",
+ "regex",
+ "simple-error",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -84,6 +95,10 @@ checksum = "2850f2f5a82cbf437dd5af4d49848fbdfc27c157c3d010345776f952765261c5"
 dependencies = [
  "os_str_bytes",
 ]
+
+[[package]]
+name = "common"
+version = "0.1.0"
 
 [[package]]
 name = "either"
@@ -173,6 +188,7 @@ name = "la_template_base"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "enum_dispatch",
  "env_logger",
  "itertools",
@@ -188,6 +204,7 @@ name = "la_template_rs"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "enum_dispatch",
  "env_logger",
  "itertools",
