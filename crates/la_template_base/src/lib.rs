@@ -34,13 +34,13 @@ impl <'t> GenerateTemplate<'t>
         let (sucs, errs): (Vec<_>, Vec<_>) = res.collect::<Vec<_>>()
             .into_iter()
             .partition_result();
-        if errs.len() > 0 {
+        if !errs.is_empty() {
             res_ok(sucs.join(""))
         } else {
             res_err(errs.iter().map(|err|err.to_string()).join("\n"))
         }        
     }
-    fn undefined_vars<'a>(&'a self) -> Vec<Cow<'a, str>> {
+    fn undefined_vars(&self) -> Vec<Cow<str>> {
         self.template.symbols().iter()
             .filter_map(|s| self.variables.get_defn(s).ok())
             .collect::<Vec<_>>()
@@ -87,7 +87,7 @@ const fn escape()->u8{b'\\'}
 
 #[derive(Debug)]
 enum SeekSymbol {
-    EOF,
+    EndOfFile,
     Symbol,
     Escape
 }
@@ -101,7 +101,7 @@ impl <R> /*FnOnce()->MyResult<Template> for*/ TemplateParser<R>
             log::debug!("Next token: symb: {symb:?}, token: {token:?}");
             self.tokens.push(token);
             match symb {
-                SeekSymbol::EOF => break res_ok(()),
+                SeekSymbol::EndOfFile => break res_ok(()),
                 SeekSymbol::Escape => continue,
                 _ => {}
             }
@@ -119,7 +119,7 @@ impl <R> /*FnOnce()->MyResult<Template> for*/ TemplateParser<R>
     }
     pub fn new(template: R, sym: Option<u8>, escape: Option<u8>)->Self {
         Self { 
-            template: template, 
+            template, 
             sym: sym.unwrap_or(b'$'), 
             escape: escape.unwrap_or(b'\\'), 
             buf: Default::default(), 
@@ -138,7 +138,7 @@ impl <R> /*FnOnce()->MyResult<Template> for*/ TemplateParser<R>
         log::debug!("Found {}u8; symb_chr: {symb_chr:?}", self.sym);
         if matches!(symb_chr, None) {
             // This will be the last self.token that is a literal.
-            return res_ok((SeekSymbol::EOF, Token::from_bytes(&self.buf)?));
+            return res_ok((SeekSymbol::EndOfFile, Token::from_bytes(&self.buf)?));
         }
         let symb = symb_chr.unwrap();
         let chr_before = self.buf.pop();

@@ -38,5 +38,5 @@ fn main_result() -> Result<(), AnyErr> {
 
 fn main() {
     main_result()
-        .unwrap_or_else(|err| eprintln!("Failed to parse given templates: {}", err.to_string()))
+        .unwrap_or_else(|err| eprintln!("Failed to parse given templates: {}", err))
 }

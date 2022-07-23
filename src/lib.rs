@@ -6,18 +6,16 @@ use replace_regex::*;
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufReader, Write},
-    os::unix::prelude::FileExt,
+    io::{Write},
     path::{PathBuf},
 };
 
-use enum_dispatch::enum_dispatch;
+
 use itertools::{Itertools};
 use la_template_base::{
-    generate_template, parse_template, GenerateTemplate, VariableMap,
+    parse_template, GenerateTemplate,
 };
-use common::{AnyErr, OptionVecTrait, MyResult, MyResultTrait};
+use common::{AnyErr, OptionVecTrait, MyResultTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simple_error::simple_error;
@@ -46,7 +44,14 @@ pub fn generate_with_handler(
     manager: ManagerSchema, mut fs: FileSystem
 ) -> Result<(), Vec<AnyErr>> {
     // parse vars and templates separately
-    let parsed_vars: Vec<MyResult<(_, VariableMap)>> = manager
+    let mut dispatched_regex = manager
+        .replace_regex
+        .unwrap_or_default()
+        .compile()
+        .map_err(|e| vec![e.into()])?;
+
+    // now group errors aside from good ones
+    let mut grouped_vars = manager
         .vars
         .iter()
         .map(|v| {
@@ -54,8 +59,8 @@ pub fn generate_with_handler(
                 .and_then(|f| serde_json::from_reader::<_, Value>(f).map_err(|e| e.into()))
                 .map(|val| (&v.metadata, val.into()))
         })
-        .collect::<Vec<_>>();
-    let parsed_templates = manager
+        .into_group_map_by(|r_mvar| matches!(r_mvar, Result::Ok(_)));
+    let mut grouped_templates = manager
         .templates
         .iter()
         .map(|template_path| {
@@ -64,19 +69,6 @@ pub fn generate_with_handler(
                     parse_template(template_buf).map(|p| (template_path, p.into()))
                 })
         })
-        .collect::<Vec<_>>();
-    let mut dispatched_regex = manager
-        .replace_regex
-        .unwrap_or_default()
-        .compile()
-        .map_err(|e| vec![e.into()])?;
-
-    // now group errors aside from good ones
-    let mut grouped_vars = parsed_vars
-        .into_iter()
-        .into_group_map_by(|r_mvar| matches!(r_mvar, Result::Ok(_)));
-    let mut grouped_templates = parsed_templates
-        .into_iter()
         .into_group_map_by(|r_temp| matches!(r_temp, Result::Ok(_)));
 
     let skip_error = manager.skip_if_error.unwrap_or(true);
@@ -96,7 +88,7 @@ pub fn generate_with_handler(
     };
 
     // Greedily show warnings or fail.
-    if err_msg.len() > 0 {
+    if !err_msg.is_empty() {
         if !skip_error {
             return Err(vec![simple_error!(err_msg).into()]);
         }
@@ -125,13 +117,13 @@ pub fn generate_with_handler(
             let location = dispatched_regex.regex_replace(path)?;
             // let location_f = File::create(location)?;
             GenerateTemplate {
-                template: &temp,
-                variables: &vars,
+                template: temp,
+                variables: vars,
             }
             .generate()
             .and_then(
                 |outp| fs.bufwrite(location)?.into_inner().unwrap()
-                    .write_all(&mut outp.into_bytes()).my_result()
+                    .write_all(&outp.into_bytes()).my_result()
             )
         })
         .filter_map(|v| v.err())

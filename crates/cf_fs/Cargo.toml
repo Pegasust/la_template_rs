@@ -12,3 +12,6 @@ common={path="../common"}
 simple-error="0.2.3"
 regex="1.6.0"
 once_cell="*"
+
+[dev-dependencies]
+itertools = "0.10.3"

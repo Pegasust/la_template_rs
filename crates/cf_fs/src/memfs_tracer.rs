@@ -24,13 +24,8 @@ impl Default for Tracer {
         Self::NoopTracer(Default::default())
     }
 }
-
+#[derive(Default, Debug)]
 pub struct NoopTracer;
-impl Default for NoopTracer {
-    fn default() -> Self {
-        Self { }
-    }
-}
 impl Trace for NoopTracer {
     fn on_open<P>(&mut self,_path:P)where P:AsRef<Path> {
         

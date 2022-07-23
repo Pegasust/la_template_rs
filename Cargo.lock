@@ -46,6 +46,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "enum_dispatch",
+ "itertools",
  "once_cell",
  "regex",
  "simple-error",

@@ -1,20 +1,14 @@
 use std::{path::{Path, PathBuf}, collections::HashMap, io::{Read, Write, BufReader, BufWriter, Seek, SeekFrom}};
 
-use common::{MyResult, MyResultTrait, wrapper, AnyErr, wrap_fn};
+use common::{MyResult, MyResultTrait, AnyErr, wrap_fn};
 use enum_dispatch::enum_dispatch;
 use simple_error::simple_error;
 
 use crate::memfs_tracer::{Tracer, Trace};
 
-
+#[derive(Default)]
 pub struct FileSystem {
     fs_impl: FileSystemImpl
-}
-
-impl Default for FileSystem {
-    fn default() -> Self {
-        Self { fs_impl: Default::default() }
-    }
 }
 
 impl <'a> FileSystem {
@@ -25,10 +19,10 @@ impl <'a> FileSystem {
         self.fs_impl.create(path).map(|f| File{ f_impl: f })
     }
     pub fn bufread<P>(&'a mut self, path: P) -> MyResult<BufReader<File>> where P: AsRef<Path> {
-        self.open(path).map(|v| std::io::BufReader::new(v))
+        self.open(path).map(std::io::BufReader::new)
     }
     pub fn bufwrite<P>(&'a mut self, path: P) -> MyResult<BufWriter<File>> where P: AsRef<Path> {
-        self.create(path).map(|v| std::io::BufWriter::new(v))
+        self.create(path).map(std::io::BufWriter::new)
     }
 }
 
@@ -144,12 +138,13 @@ impl <'a> Seek for FileImpl<'a> {
                 };
                 (offset.0 as i64).checked_add(offset.1)
                     .and_then(|v| {
-                        (v >= 0)
-                        .then_some(v as usize)
-                        .map(|v| {mf.offset = v; v})
-                        .map(|v| v as u64)
-                        })
-                    .ok_or(std::io::Error::new(std::io::ErrorKind::InvalidInput, 
+                        if v < 0 {
+                            None
+                        } else {
+                            mf.offset = v as usize;
+                            Some(v as u64)
+                        }})
+                    .ok_or_else(||std::io::Error::new(std::io::ErrorKind::InvalidInput, 
                         simple_error!("Bad seek: Invalid or overflow position")))
             }
         }
@@ -247,10 +242,9 @@ impl <'a> ProvideFileSystem<'a> for MemFileSystem where Self: 'a {
 
     fn create<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path> {
         let p_ref = path.as_ref();
-        self.bucket.insert(p_ref.to_path_buf(), vec![0u8;0])
-            .map(|last| {
-                self.fs_tracer.on_create_overwrite(p_ref, Some(&last));
-            });
+        if let Some(last) = self.bucket.insert(p_ref.to_path_buf(), vec![0u8;0]) {
+            self.fs_tracer.on_create_overwrite(path.as_ref(), Some(&last))
+        }
         Ok(self.bucket.get_mut(p_ref)
             .map(|v| MemFile::write_f(v).into())
             .expect("HashMap: insert, but cannot get_mut right after"))
@@ -258,13 +252,9 @@ impl <'a> ProvideFileSystem<'a> for MemFileSystem where Self: 'a {
     }
 }
 
-
+#[derive(Default)]
 struct OSFileSystem;
-impl Default for OSFileSystem {
-    fn default() -> Self {
-        Self {  }
-    }
-}
+
 impl <'a> ProvideFileSystem<'a> for OSFileSystem {
     fn open<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path> {
         std::fs::File::open(path).my_result().map(|v| v.into())
