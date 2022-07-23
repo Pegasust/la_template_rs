@@ -20,6 +20,7 @@ itertools = { version = "0.10.3" }
 clap = {version="3.2.12", features=["derive"]}
 enum_dispatch = "0.3.8"
 la_template_base = { version = "*", path = "crates/la_template_base" }
+cf_fs = {path="crates/cf_fs"}
 common = {path="crates/common"}
 regex="1.6.0"
 lazy_static="1.4.0"

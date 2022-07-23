@@ -27,19 +27,19 @@ macro_rules! wrap_fn {
     // move
     ($v:vis fn $func:ident($self:ident $(,$arg:ident: $argt:ty),*) -> $ret:ty) => {
         fn $func($self $(,$arg: $argt),*) -> $ret {
-            $self.0.$func($($arg),*)
+            $self.move_inner().$func($($arg),*)
         }
     };
     // ref
     ($v:vis fn $func:ident(&$self:ident $(,$arg:ident: $argt:ty),*) -> $ret:ty) => {
         fn $func(&$self $(,$arg: $argt),*) -> $ret {
-            $self.0.$func($($arg),*)
+            $self.get_ref().$func($($arg),*)
         }
     };
     // mut ref
     ($v:vis fn $func:ident(&mut $self:ident $(,$arg:ident: $argt:ty),*) -> $ret:ty) => {
         fn $func(&mut $self $(,$arg: $argt),*) -> $ret {
-            $self.0.$func($($arg),*)
+            $self.get_mut().$func($($arg),*)
         }
     };
 }

@@ -1,5 +1,5 @@
 mod replace_regex;
-mod template_fs;
+// mod template_fs;
 mod memfs_tracer;
 
 use replace_regex::*;
@@ -7,7 +7,7 @@ use replace_regex::*;
 use std::{
     collections::HashMap,
     fs::File,
-    io::BufReader,
+    io::{BufReader, Write},
     os::unix::prelude::FileExt,
     path::{PathBuf},
 };
@@ -21,6 +21,7 @@ use common::{AnyErr, OptionVecTrait, MyResult, MyResultTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simple_error::simple_error;
+use cf_fs::FileSystem;
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 struct ManagedVarSchema {
@@ -42,15 +43,14 @@ pub struct ManagerSchema {
 }
 
 pub fn generate_with_handler(
-    manager: ManagerSchema, fs: FileSystemImpl
+    manager: ManagerSchema, mut fs: FileSystem
 ) -> Result<(), Vec<AnyErr>> {
     // parse vars and templates separately
     let parsed_vars: Vec<MyResult<(_, VariableMap)>> = manager
         .vars
         .iter()
         .map(|v| {
-            File::open(&v.var)
-                .map_err(|e| e.into())
+            fs.bufread(&v.var)
                 .and_then(|f| serde_json::from_reader::<_, Value>(f).map_err(|e| e.into()))
                 .map(|val| (&v.metadata, val.into()))
         })
@@ -59,9 +59,7 @@ pub fn generate_with_handler(
         .templates
         .iter()
         .map(|template_path| {
-            File::open(template_path)
-                .map_err(|e| e.into())
-                .map(|template_f| BufReader::new(template_f))
+            fs.bufread(template_path)
                 .and_then(|template_buf| {
                     parse_template(template_buf).map(|p| (template_path, p.into()))
                 })
@@ -132,8 +130,8 @@ pub fn generate_with_handler(
             }
             .generate()
             .and_then(
-                |outp| generate_handler.write(location, outp), // location_f.write_all_at(outp.as_bytes(), 0u64)
-                                                               //     .map_err(|e| e.into())
+                |outp| fs.bufwrite(location)?.into_inner().unwrap()
+                    .write_all(&mut outp.into_bytes()).my_result()
             )
         })
         .filter_map(|v| v.err())

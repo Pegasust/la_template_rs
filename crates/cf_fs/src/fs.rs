@@ -1,6 +1,6 @@
-use std::{path::{Path, PathBuf}, collections::HashMap, io::{Read, Write}};
+use std::{path::{Path, PathBuf}, collections::HashMap, io::{Read, Write, BufReader, BufWriter, Seek, SeekFrom}};
 
-use common::{MyResult, MyResultTrait, wrapper, AnyErr};
+use common::{MyResult, MyResultTrait, wrapper, AnyErr, wrap_fn};
 use enum_dispatch::enum_dispatch;
 use simple_error::simple_error;
 
@@ -11,29 +11,87 @@ pub struct FileSystem {
     fs_impl: FileSystemImpl
 }
 
+impl Default for FileSystem {
+    fn default() -> Self {
+        Self { fs_impl: Default::default() }
+    }
+}
+
+impl <'a> FileSystem {
+    pub fn open<P>(&'a mut self, path: P) -> MyResult<File<'a>> where P: AsRef<Path> {
+        self.fs_impl.open(path).map(|f| File{ f_impl: f })
+    }
+    pub fn create<P>(&'a mut self, path: P) -> MyResult<File<'a>> where P: AsRef<Path> {
+        self.fs_impl.create(path).map(|f| File{ f_impl: f })
+    }
+    pub fn bufread<P>(&'a mut self, path: P) -> MyResult<BufReader<File>> where P: AsRef<Path> {
+        self.open(path).map(|v| std::io::BufReader::new(v))
+    }
+    pub fn bufwrite<P>(&'a mut self, path: P) -> MyResult<BufWriter<File>> where P: AsRef<Path> {
+        self.create(path).map(|v| std::io::BufWriter::new(v))
+    }
+}
+
+#[derive(Debug)]
 pub struct File<'a> {
     f_impl: FileImpl<'a>
 }
-
-impl <'a> Read for File<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.f_impl.read(buf)
+impl <'a> File<'a> {
+    #[inline]
+    fn get_mut(&mut self) -> &mut FileImpl<'a> {
+        &mut self.f_impl
     }
 }
-impl <'a> Write for File<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.f_impl.write(buf)
-    }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.f_impl.flush()
-    }
+impl <'a> Read for File<'a> {
+    wrap_fn!(fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>);
+}
+impl <'a> Write for File<'a> {
+    wrap_fn!(fn write(&mut self, buf: &[u8]) -> std::io::Result<usize>);
+    wrap_fn!(fn flush(&mut self) -> std::io::Result<()>);
+}
+impl <'a> Seek for File<'a> {
+    wrap_fn!(fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64>);
 }
 
 #[enum_dispatch(ProvideFileSystem)]
 enum FileSystemImpl {
-    OSFileSystem(OSFileSystem),
-    MemFileSystem(MemFileSystem)
+    OSFileSystem,
+    MemFileSystem
+}
+
+impl Default for FileSystemImpl {
+    fn default() -> Self {
+        OSFileSystem::default().into()
+    }
+}
+
+impl From<OSFileSystem> for FileSystemImpl {
+    fn from(s: OSFileSystem) -> Self {
+        Self::OSFileSystem(s)
+    }
+}
+
+impl From<MemFileSystem> for FileSystemImpl {
+    fn from(s: MemFileSystem) -> Self {
+        Self::MemFileSystem(s)
+    }
+}
+
+impl <'a> ProvideFileSystem<'a> for FileSystemImpl {
+    fn open<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path> {
+        match self {
+            Self::OSFileSystem(fs) => fs.open(path),
+            Self::MemFileSystem(mfs) => mfs.open(path)
+        }
+    }
+
+    fn create<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path> {
+        match self {
+            Self::OSFileSystem(fs) => fs.create(path),
+            Self::MemFileSystem(mfs) => mfs.create(path)
+        }
+    }
 }
 
 trait ProvideFileSystem<'a> where Self: 'a {
@@ -42,7 +100,7 @@ trait ProvideFileSystem<'a> where Self: 'a {
     fn open<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path>;
     fn create<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path>;
 }
-
+#[derive(Debug)]
 enum FileImpl<'a> {
     OSFile(std::fs::File),
     MemFile(MemFile<'a>)
@@ -67,6 +125,33 @@ impl <'a> Write for FileImpl<'a> {
         match self {
             Self::OSFile(f) => f.flush(),
             Self::MemFile(mf) => mf.flush()
+        }
+    }
+}
+
+impl <'a> Seek for FileImpl<'a> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            Self::OSFile(f) => f.seek(pos),
+            Self::MemFile(mf) => {
+                let offset = match pos {
+                    SeekFrom::Start(n) => {
+                        mf.offset = n as usize;
+                        return Ok(n);
+                    },
+                    SeekFrom::End(n) => (mf.f_impl.vec().len(), n),
+                    SeekFrom::Current(n) => (mf.offset, n)
+                };
+                (offset.0 as i64).checked_add(offset.1)
+                    .and_then(|v| {
+                        (v >= 0)
+                        .then_some(v as usize)
+                        .map(|v| {mf.offset = v; v})
+                        .map(|v| v as u64)
+                        })
+                    .ok_or(std::io::Error::new(std::io::ErrorKind::InvalidInput, 
+                        simple_error!("Bad seek: Invalid or overflow position")))
+            }
         }
     }
 }
@@ -109,7 +194,7 @@ impl <'a> TryInto<std::fs::File> for FileImpl<'a> {
         }
     }
 }
-
+#[derive(Debug)]
 enum MemFileImpl<'a> {
     MemFileRead(&'a Vec<u8>),
     MemFileWrite(&'a mut Vec<u8>)
@@ -130,6 +215,7 @@ impl <'a> MemFileImpl<'a> {
     }
 }
 
+#[derive(Debug)]
 struct MemFile<'a> {
     f_impl: MemFileImpl<'a>,
     offset: usize
@@ -174,6 +260,11 @@ impl <'a> ProvideFileSystem<'a> for MemFileSystem where Self: 'a {
 
 
 struct OSFileSystem;
+impl Default for OSFileSystem {
+    fn default() -> Self {
+        Self {  }
+    }
+}
 impl <'a> ProvideFileSystem<'a> for OSFileSystem {
     fn open<P>(&'a mut self, path: P) -> MyResult<FileImpl<'a>> where P: AsRef<Path> {
         std::fs::File::open(path).my_result().map(|v| v.into())
